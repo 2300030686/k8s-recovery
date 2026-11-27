@@ -1,0 +1,101 @@
+apiVersion: v1
+kind: Namespace
+metadata: { name: recovery-app }
+---
+apiVersion: v1
+kind: Secret
+metadata: { name: mysql-secret, namespace: recovery-app }
+stringData: { MYSQL_ROOT_PASSWORD: rootpass, MYSQL_DATABASE: recoverydb }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: mysql-data, namespace: recovery-app }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 1Gi } }
+  storageClassName: local-manual
+  volumeName: recovery-mysql-local-pv
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: mysql, namespace: recovery-app }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: mysql } }
+  template:
+    metadata:
+      labels: { app: mysql }
+      annotations: { backup.velero.io/backup-volumes: data }
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:8.0
+          envFrom: [{ secretRef: { name: mysql-secret } }]
+          ports: [{ containerPort: 3306 }]
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/mysql }
+            - { name: init, mountPath: /docker-entrypoint-initdb.d }
+          readinessProbe:
+            exec: { command: ["sh","-c","mysqladmin ping -uroot -prootpass"] }
+            initialDelaySeconds: 20
+            periodSeconds: 5
+      volumes:
+        - { name: data, persistentVolumeClaim: { claimName: mysql-data } }
+        - { name: init, configMap: { name: mysql-init } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: mysql, namespace: recovery-app }
+spec: { selector: { app: mysql }, ports: [{ port: 3306 }] }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: mysql-ext, namespace: recovery-app }
+spec: { type: NodePort, selector: { app: mysql }, ports: [{ port: 3306, nodePort: 30094 }] }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: api, namespace: recovery-app }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: api } }
+  template:
+    metadata: { labels: { app: api } }
+    spec:
+      containers:
+        - name: api
+          image: recovery-api:1
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: DB_HOST, value: mysql }
+            - { name: DB_NAME, value: recoverydb }
+            - { name: DB_PASSWORD, value: rootpass }
+            - { name: CLUSTER_NAME, valueFrom: { configMapKeyRef: { name: cluster-info, key: name } } }
+          ports: [{ containerPort: 8080 }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: api, namespace: recovery-app }
+spec: { type: NodePort, selector: { app: api }, ports: [{ port: 8080, nodePort: 30093 }] }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: ui, namespace: recovery-app }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: ui } }
+  template:
+    metadata: { labels: { app: ui } }
+    spec:
+      containers:
+        - name: ui
+          image: recovery-ui:1
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 80 }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: ui, namespace: recovery-app }
+spec: { type: NodePort, selector: { app: ui }, ports: [{ port: 80, nodePort: 30092 }] }
+

@@ -1,0 +1,12 @@
+server.port: 8080
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3306/dashboard?useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: root
+  jpa.hibernate.ddl-auto: update
+recovery:
+  source-context: kind-recovery-demo
+  target-context: kind-recovery-target
+  namespace: wordpress
+  mysql-password: rootpass
